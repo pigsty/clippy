@@ -1,0 +1,10 @@
+services:
+  clippy:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./content:/data/content
+    env_file:
+      - .env
+    restart: unless-stopped

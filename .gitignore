@@ -1,0 +1,5 @@
+content/
+node_modules/
+dist/
+.env
+*.mp4
