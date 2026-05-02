@@ -1,4 +1,5 @@
 import { CategorySummary, extractTags, Video } from './videos';
+import { PublishStatus } from './publishStatus';
 
 interface ShareCardData {
   label: string;
@@ -274,6 +275,18 @@ function formatDate(iso?: string): string {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+  });
+}
+
+function formatDateTime(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   });
 }
 
@@ -834,7 +847,13 @@ ${ADMIN_CSS}
 </html>`;
 }
 
-export function adminPage(videos: Video[], flash?: string, isError = false, previewReady = false): string {
+export function adminPage(
+  videos: Video[],
+  flash?: string,
+  isError = false,
+  previewReady = false,
+  publishStatus?: PublishStatus
+): string {
   const flashHtml = flash
     ? `<div class="flash ${isError ? 'flash-err' : 'flash-ok'}">${escHtml(flash)}</div>`
     : '';
@@ -888,19 +907,29 @@ export function adminPage(videos: Video[], flash?: string, isError = false, prev
   </form>
 </div>`;
 
+  const status = publishStatus?.state || 'idle';
+  const publishStatusHtml = status === 'running'
+    ? `<p style="font-size:13px;color:#0c5460;margin-top:8px"><strong>Publish status:</strong> Running in background...</p>`
+    : status === 'failed'
+    ? `<p style="font-size:13px;color:#721c24;margin-top:8px"><strong>Publish status:</strong> Failed${publishStatus?.error ? ` - ${escHtml(publishStatus.error)}` : ''}</p>`
+    : status === 'success'
+    ? `<p style="font-size:13px;color:#155724;margin-top:8px"><strong>Publish status:</strong> Completed${publishStatus?.completedAt ? ` at ${escHtml(formatDateTime(publishStatus.completedAt))}` : ''}</p>`
+    : `<p style="font-size:13px;color:#666;margin-top:8px"><strong>Publish status:</strong> Idle</p>`;
+
   const publishCard = `
 <div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
   <div>
     <strong>Static output</strong>
     <p style="font-size:13px;color:#666;margin-top:2px">Generate static HTML for preview, then publish to S3 when ready.</p>
     ${previewReady ? '<p style="font-size:13px;color:#0070f3;margin-top:6px"><a href="/preview/" target="_blank" rel="noopener">Open latest preview</a></p>' : ''}
+    ${publishStatusHtml}
   </div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <form method="POST" action="/admin/preview">
       <button class="btn btn-success" type="submit">Generate preview</button>
     </form>
     <form method="POST" action="/admin/publish">
-      <button class="btn btn-primary" type="submit">Publish to S3</button>
+      <button class="btn btn-primary" type="submit" ${status === 'running' ? 'disabled' : ''}>${status === 'running' ? 'Publishing...' : 'Publish to S3'}</button>
     </form>
   </div>
 </div>`;

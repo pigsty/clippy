@@ -146,6 +146,28 @@ async function generateAvatar(srcPath: string, destPath: string): Promise<void> 
   );
 }
 
+function applySubtitleLinePosition(vttContent: string): string {
+  const normalized = vttContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const timingLinePattern = /^(\d{2}:)?\d{2}:\d{2}\.\d{3}\s+-->\s+(\d{2}:)?\d{2}:\d{2}\.\d{3}(\s+.*)?$/;
+
+  return normalized
+    .split('\n')
+    .map(rawLine => {
+      const line = rawLine.trim();
+      if (!timingLinePattern.test(line)) {
+        return rawLine;
+      }
+
+      const withoutPositioning = line
+        .replace(/\s+line:\s*[-\d.]+%?(?:,[a-z]+)?/gi, '')
+        .replace(/\s+position:\s*[-\d.]+%?(?:,[a-z]+)?/gi, '')
+        .replace(/\s+align:\s*[a-z]+/gi, '');
+
+      return `${withoutPositioning} line:75% position:50% align:middle`;
+    })
+    .join('\n');
+}
+
 export async function generateStaticSite(options: GenerateOptions = {}): Promise<void> {
   const forPreview = options.forPreview === true;
   const basePath = forPreview ? '/preview' : '';
@@ -217,7 +239,13 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
       const subtitlesSrc = path.join(videoContentDir, video.meta.subtitlesFile || 'subtitles.vtt');
       if (fs.existsSync(subtitlesSrc)) {
         const subtitleName = path.basename(subtitlesSrc);
-        fs.symlinkSync(subtitlesSrc, path.join(videoStaticDir, subtitleName));
+        const subtitleDest = path.join(videoStaticDir, subtitleName);
+        if (subtitleName.endsWith('.vtt')) {
+          const rawVtt = fs.readFileSync(subtitlesSrc, 'utf-8');
+          fs.writeFileSync(subtitleDest, applySubtitleLinePosition(rawVtt), 'utf-8');
+        } else {
+          fs.symlinkSync(subtitlesSrc, subtitleDest);
+        }
       }
 
       const hlsSrc = path.join(videoContentDir, 'hls');
@@ -244,10 +272,19 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
     const navigation = buildVideoNavigation(published, categories, video.slug, basePath);
     fs.mkdirSync(videoStaticDir, { recursive: true });
 
-    // Copy thumbs
+    // Copy media assets and normalize subtitle line position for publish output.
     const assets = fs.readdirSync(videoContentDir).filter(f => f.endsWith('.jpg') || f.endsWith('.vtt') || f.endsWith('.srt'));
     for (const asset of assets) {
-      fs.copyFileSync(path.join(videoContentDir, asset), path.join(videoStaticDir, asset));
+      const src = path.join(videoContentDir, asset);
+      const dest = path.join(videoStaticDir, asset);
+
+      if (asset.endsWith('.vtt')) {
+        const rawVtt = fs.readFileSync(src, 'utf-8');
+        fs.writeFileSync(dest, applySubtitleLinePosition(rawVtt), 'utf-8');
+        continue;
+      }
+
+      fs.copyFileSync(src, dest);
     }
 
     // Copy HLS tree

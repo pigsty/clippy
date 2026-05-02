@@ -9,11 +9,13 @@ import { listVideos, getVideo, saveVideoMeta, deleteVideo, CONTENT_DIR, VideoMet
 import { transcodeVideo, extractThumbs } from './transcode';
 import { runTranscriptionStep } from './transcribe';
 import { publish, generateStaticSite, STATIC_DIR } from './publish';
+import { getPublishStatus, markPublishFailed, markPublishRunning, markPublishSuccess } from './publishStatus';
 import { adminPage, loginPage, editVideoPage, bioPage } from './templates';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const activeTranscodes = new Set<string>();
+let publishInProgress = false;
 
 function startBackgroundTranscode(slug: string): void {
   if (activeTranscodes.has(slug)) {
@@ -139,9 +141,12 @@ app.get('/', (_req, res) => res.redirect('/admin'));
 
 app.get('/admin', requireAuth, (_req, res) => {
   const videos = listVideos();
+  const publishStatus = getPublishStatus();
   const q = _req.query as Record<string, string>;
   const flash = q.published
     ? 'Site published to S3!'
+    : q.publishStarted
+    ? 'Publish started in the background. Refresh to see status.'
     : q.previewed
     ? 'Static site generated. Open preview to inspect before publishing.'
     : q.processing
@@ -149,7 +154,7 @@ app.get('/admin', requireAuth, (_req, res) => {
     : q.error
     ? `Error: ${q.error}`
     : undefined;
-  res.send(adminPage(videos, flash, !!q.error, q.previewed === '1'));
+  res.send(adminPage(videos, flash, !!q.error, q.previewed === '1', publishStatus));
 });
 
 app.post(
@@ -364,14 +369,28 @@ app.post('/admin/bio/avatar', requireAuth, uploadThumb.single('avatar'), (req, r
 });
 
 app.post('/admin/publish', requireAuth, async (_req, res) => {
-  try {
-    await publish();
-    res.redirect('/admin?published=1');
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'publish failed';
-    console.error(err);
-    res.redirect(`/admin?error=${encodeURIComponent(msg)}`);
+  if (publishInProgress) {
+    res.redirect('/admin?error=Publish%20is%20already%20running');
+    return;
   }
+
+  publishInProgress = true;
+  markPublishRunning();
+
+  setImmediate(async () => {
+    try {
+      await publish();
+      markPublishSuccess();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'publish failed';
+      console.error(err);
+      markPublishFailed(msg);
+    } finally {
+      publishInProgress = false;
+    }
+  });
+
+  res.redirect('/admin?publishStarted=1');
 });
 
 app.post('/admin/preview', requireAuth, async (_req, res) => {
