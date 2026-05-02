@@ -9,6 +9,13 @@ export interface VideoMeta {
   publishDate?: string;
   thumb?: string;
   published?: boolean;
+  transcodeStatus?: 'queued' | 'processing' | 'completed' | 'failed';
+  transcodeError?: string;
+  transcodeAttempts?: number;
+  subtitlesFile?: string;
+  transcriptionJobName?: string;
+  transcriptionStatus?: 'idle' | 'in_progress' | 'completed' | 'failed';
+  transcriptionError?: string;
   uploadedAt: string;
 }
 

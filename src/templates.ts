@@ -84,13 +84,14 @@ a { color: inherit; text-decoration: none; }
   position: fixed;
   inset: 0;
   display: none;
+  pointer-events: none;
   align-items: center;
   justify-content: center;
   padding: 16px;
   background: rgba(0, 0, 0, 0.62);
   z-index: 999;
 }
-.share-modal.open { display: flex; }
+.share-modal.open { display: flex; pointer-events: auto; }
 .share-modal-panel {
   width: min(360px, 100%);
   background: var(--surface);
@@ -175,9 +176,24 @@ a { color: inherit; text-decoration: none; }
   white-space: nowrap;
 }
 
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 0; }
-.grid-item { position: relative; aspect-ratio: 9/16; overflow: hidden; background: #000; }
-.grid-item img { width: 100%; height: 100%; object-fit: cover; transition: opacity .2s; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 0; position: relative; z-index: 1; }
+.grid-item {
+  position: relative;
+  display: block;
+  aspect-ratio: 9/16;
+  overflow: hidden;
+  background: #000;
+  touch-action: manipulation;
+}
+.grid-item img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity .2s;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
 .grid-item:hover img { opacity: .85; }
 
 hr.divider { border: none; border-top: 1px solid var(--border); margin: 0 16px; }
@@ -241,6 +257,8 @@ textarea { resize: vertical; min-height: 80px; }
          font-weight: 700; }
 .badge-pub { background: #d4edda; color: #155724; }
 .badge-draft { background: #fff3cd; color: #856404; }
+.badge-proc { background: #d1ecf1; color: #0c5460; }
+.badge-fail { background: #f8d7da; color: #721c24; }
 .thumb-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 12px; }
 .thumb-option { position: relative; aspect-ratio: 9/16; cursor: pointer; }
 .thumb-option img { width: 100%; height: 100%; object-fit: cover; border-radius: 4px;
@@ -628,6 +646,13 @@ export function generateVideoHTML(
     `<a class="tag" href="${basePath}/category/${tag.slice(1)}/">${tag}</a>`
   ).join('');
 
+  const subtitleUrl = video.meta.subtitlesFile
+    ? `${basePath}/video/${video.slug}/${video.meta.subtitlesFile}`
+    : '';
+  const subtitleTrack = subtitleUrl
+    ? `<track id="subtitle-track" kind="subtitles" srclang="en" label="English" src="${subtitleUrl}" default>`
+    : '';
+
   const hlsScript = `
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
@@ -643,6 +668,34 @@ export function generateVideoHTML(
     }
   })();
 </script>`;
+
+  const subtitleScript = subtitleUrl
+    ? `<script>
+  (function() {
+    var player = document.getElementById('player');
+    if (!(player instanceof HTMLVideoElement)) {
+      return;
+    }
+
+    function enableSubtitleTracks() {
+      if (!player.textTracks || !player.textTracks.length) {
+        return;
+      }
+      for (var i = 0; i < player.textTracks.length; i++) {
+        var track = player.textTracks[i];
+        if (track.kind === 'subtitles' || track.kind === 'captions') {
+          track.mode = 'showing';
+        }
+      }
+    }
+
+    enableSubtitleTracks();
+    player.addEventListener('loadedmetadata', enableSubtitleTracks);
+    player.addEventListener('loadeddata', enableSubtitleTracks);
+    player.addEventListener('play', enableSubtitleTracks);
+  })();
+</script>`
+    : '';
 
   const navigationScript = navigation
     ? `
@@ -704,7 +757,7 @@ export function generateVideoHTML(
   Back
 </a>
 <div class="video-wrap">
-  <video id="player" controls playsinline poster="${poster}"></video>
+  <video id="player" controls playsinline poster="${poster}">${subtitleTrack}</video>
 </div>
 <div class="video-info">
   <p class="video-title">${renderText(stripTags(video.meta.title))}</p>
@@ -720,7 +773,7 @@ export function generateVideoHTML(
     basePath,
     showProfile: false,
     allCoverVideo: video,
-    content: content + hlsScript + navigationScript + renderVideoAnalytics(video, analytics),
+    content: content + hlsScript + subtitleScript + navigationScript + renderVideoAnalytics(video, analytics),
   });
 }
 
@@ -788,15 +841,31 @@ export function adminPage(videos: Video[], flash?: string, isError = false, prev
 
   const rows = videos.map(video => {
     const thumb = video.thumbs.length ? `/content/videos/${video.slug}/${video.meta.thumb || video.thumbs[0]}` : '';
-    const badge = video.meta.published
+    const publishBadge = video.meta.published
       ? `<span class="badge badge-pub">Published</span>`
       : `<span class="badge badge-draft">Draft</span>`;
+    const transcodeStatus = video.meta.transcodeStatus || (video.hasHLS ? 'completed' : 'processing');
+    const transcodeBadge = transcodeStatus === 'failed'
+      ? `<span class="badge badge-fail">Transcode failed</span>`
+      : transcodeStatus === 'completed'
+      ? `<span class="badge badge-pub">Ready</span>`
+      : `<span class="badge badge-proc">Processing</span>`;
     const date = formatDate(video.meta.publishDate || video.meta.uploadedAt);
+    const failureAlert = transcodeStatus === 'failed'
+      ? `<div class="flash flash-err" style="margin-top:8px;margin-bottom:0;padding:8px 10px">
+          <strong>Processing failed:</strong> ${escHtml(video.meta.transcodeError || 'Unknown transcoding error')}
+          <form method="POST" action="/admin/video/${video.slug}/retry-processing" style="margin-top:8px">
+            <button class="btn btn-sm btn-danger" type="submit">Retry processing</button>
+          </form>
+        </div>`
+      : '';
+
     return `<div class="card video-row">
       ${thumb ? `<img src="${thumb}" alt="">` : `<div style="width:54px;height:96px;background:#222;border-radius:4px"></div>`}
       <div class="video-row-info">
         <div class="video-row-title">${renderText(video.meta.title)}</div>
-        <div class="video-row-meta">${date} &nbsp; ${badge}</div>
+        <div class="video-row-meta">${date} &nbsp; ${publishBadge} &nbsp; ${transcodeBadge}</div>
+        ${failureAlert}
       </div>
       <div class="video-row-actions">
         <a class="btn btn-sm btn-primary" href="/admin/video/${video.slug}">Edit</a>
@@ -847,7 +916,27 @@ ${publishCard}
   return adminLayout('Videos', content);
 }
 
-export function editVideoPage(video: Video, saved = false): string {
+export function editVideoPage(
+  video: Video,
+  opts: {
+    saved?: boolean;
+    subtitles?: string;
+    flash?: string;
+    flashError?: boolean;
+  } = {}
+): string {
+  const saved = opts.saved === true;
+  const subtitles = opts.subtitles || '';
+  const status = video.meta.transcriptionStatus || 'idle';
+  const statusLabel = status === 'in_progress'
+    ? 'In progress'
+    : status === 'completed'
+    ? 'Completed'
+    : status === 'failed'
+    ? 'Failed'
+    : 'Idle';
+  const statusColor = status === 'completed' ? '#155724' : status === 'failed' ? '#721c24' : '#555';
+
   const thumbOptions = video.thumbs.map(thumb => {
     const url = `/content/videos/${video.slug}/${thumb}`;
     const checked = (video.meta.thumb || video.thumbs[0]) === thumb ? 'checked' : '';
@@ -859,6 +948,7 @@ export function editVideoPage(video: Video, saved = false): string {
 
   const content = `
 ${saved ? `<div class="flash flash-ok">Saved!</div>` : ''}
+${opts.flash ? `<div class="flash ${opts.flashError ? 'flash-err' : 'flash-ok'}">${escHtml(opts.flash)}</div>` : ''}
 <a href="/admin" style="font-size:13px;color:#666">← Back to videos</a>
 <div class="card" style="margin-top:12px">
   <h1>Edit video</h1>
@@ -874,6 +964,23 @@ ${saved ? `<div class="flash flash-ok">Saved!</div>` : ''}
       <span>Published</span>
     </label>
     <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+</div>
+<div class="card">
+  <h2>Subtitles (AWS Transcribe)</h2>
+  <p style="font-size:13px;color:#666;margin-bottom:10px">
+    Status: <strong style="color:${statusColor}">${statusLabel}</strong>
+    ${video.meta.transcriptionError ? `<br>${escHtml(video.meta.transcriptionError)}` : ''}
+  </p>
+  <form method="POST" action="/admin/video/${video.slug}/transcribe" style="margin-bottom:14px">
+    <button class="btn btn-success" type="submit">
+      ${status === 'in_progress' ? 'Refresh transcription status' : 'Transcribe subtitles'}
+    </button>
+  </form>
+  <form method="POST" action="/admin/video/${video.slug}/subtitles">
+    <label>Subtitle file (WebVTT)</label>
+    <textarea name="subtitles" rows="14" placeholder="WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nHello world">${escHtml(subtitles)}</textarea>
+    <button class="btn btn-primary" type="submit">Save subtitles</button>
   </form>
 </div>
 <div class="card">

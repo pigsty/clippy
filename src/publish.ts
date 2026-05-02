@@ -214,6 +214,12 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
         );
       }
 
+      const subtitlesSrc = path.join(videoContentDir, video.meta.subtitlesFile || 'subtitles.vtt');
+      if (fs.existsSync(subtitlesSrc)) {
+        const subtitleName = path.basename(subtitlesSrc);
+        fs.symlinkSync(subtitlesSrc, path.join(videoStaticDir, subtitleName));
+      }
+
       const hlsSrc = path.join(videoContentDir, 'hls');
       if (fs.existsSync(hlsSrc)) {
         fs.symlinkSync(hlsSrc, path.join(videoStaticDir, 'hls'));
@@ -239,9 +245,9 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
     fs.mkdirSync(videoStaticDir, { recursive: true });
 
     // Copy thumbs
-    const thumbs = fs.readdirSync(videoContentDir).filter(f => f.endsWith('.jpg'));
-    for (const t of thumbs) {
-      fs.copyFileSync(path.join(videoContentDir, t), path.join(videoStaticDir, t));
+    const assets = fs.readdirSync(videoContentDir).filter(f => f.endsWith('.jpg') || f.endsWith('.vtt') || f.endsWith('.srt'));
+    for (const asset of assets) {
+      fs.copyFileSync(path.join(videoContentDir, asset), path.join(videoStaticDir, asset));
     }
 
     // Copy HLS tree
