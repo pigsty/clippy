@@ -177,7 +177,7 @@ a { color: inherit; text-decoration: none; }
   white-space: nowrap;
 }
 
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 0; position: relative; z-index: 1; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 0; position: relative; z-index: 1; }
 .grid-item {
   position: relative;
   display: block;
@@ -196,6 +196,24 @@ a { color: inherit; text-decoration: none; }
   -webkit-user-drag: none;
 }
 .grid-item:hover img { opacity: .85; }
+
+.grid-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
+  z-index: 2;
+  pointer-events: none;
+}
 
 hr.divider { border: none; border-top: 1px solid var(--border); margin: 0 16px; }
 
@@ -266,6 +284,30 @@ textarea { resize: vertical; min-height: 80px; }
                     border: 3px solid transparent; }
 .thumb-option input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .thumb-option input:checked + img { border-color: #0070f3; }
+.overlay-preview { margin: 6px 0 10px; max-width: 240px; }
+.overlay-preview-frame {
+  position: relative;
+  aspect-ratio: 9/16;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #ddd;
+  background: #111;
+}
+.overlay-preview-image { width: 100%; height: 100%; object-fit: cover; display: block; }
+.overlay-preview-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  padding: 6px 8px;
+  background: #000;
+  color: #fff;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: center;
+}
 `;
 
 function formatDate(iso?: string): string {
@@ -313,6 +355,36 @@ function thumbUrl(video: Video, basePath = ''): string {
   }
 
   return `${basePath}/video/${video.slug}/${thumb}`;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function tileOverlayTop(video: Video): number {
+  if (typeof video.meta.overlayTopPercent !== 'number' || !Number.isFinite(video.meta.overlayTopPercent)) {
+    return 10;
+  }
+
+  return clampNumber(video.meta.overlayTopPercent, 0, 90);
+}
+
+function tileOverlayFontSize(video: Video): number {
+  if (typeof video.meta.overlayFontSizePx !== 'number' || !Number.isFinite(video.meta.overlayFontSizePx)) {
+    return 16;
+  }
+
+  return clampNumber(video.meta.overlayFontSizePx, 10, 64);
+}
+
+function renderTileOverlay(video: Video): string {
+  if (!video.meta.overlayText || !video.meta.overlayText.trim()) {
+    return '';
+  }
+
+  const top = tileOverlayTop(video);
+  const fontSize = tileOverlayFontSize(video);
+  return `<div class="grid-overlay" style="top:${top}%;font-size:${fontSize}px">${escHtml(video.meta.overlayText)}</div>`;
 }
 
 function renderShareButton(shareCard?: ShareCardData): string {
@@ -595,7 +667,7 @@ function videoGrid(videos: Video[], basePath = '', categoryLabel?: string): stri
     const image = thumb
       ? `<img src="${thumb}" alt="${escHtml(video.meta.title)}" loading="lazy">`
       : `<div style="width:100%;height:100%;background:#222"></div>`;
-    return `<a class="grid-item" href="${videoHref(video, basePath, categoryLabel)}">${image}</a>`;
+    return `<a class="grid-item" href="${videoHref(video, basePath, categoryLabel)}">${image}${renderTileOverlay(video)}</a>`;
   }).join('\n');
 
   return `<div class="grid">${items}</div>`;
@@ -965,6 +1037,11 @@ export function editVideoPage(
     ? 'Failed'
     : 'Idle';
   const statusColor = status === 'completed' ? '#155724' : status === 'failed' ? '#721c24' : '#555';
+  const overlayText = video.meta.overlayText || '';
+  const overlayTopPercent = tileOverlayTop(video);
+  const overlayFontSizePx = tileOverlayFontSize(video);
+  const selectedThumb = video.meta.thumb || video.thumbs[0] || '';
+  const selectedThumbUrl = selectedThumb ? `/content/videos/${video.slug}/${selectedThumb}` : '';
 
   const thumbOptions = video.thumbs.map(thumb => {
     const url = `/content/videos/${video.slug}/${thumb}`;
@@ -988,6 +1065,20 @@ ${opts.flash ? `<div class="flash ${opts.flashError ? 'flash-err' : 'flash-ok'}"
     <input type="date" name="publishDate" value="${video.meta.publishDate || ''}">
     <label>Thumbnail</label>
     <div class="thumb-grid">${thumbOptions}</div>
+    <label>Overlay text (optional)</label>
+    <textarea id="overlayText" name="overlayText" rows="4" placeholder="New drop coming soon\nSwipe for more">${escHtml(overlayText)}</textarea>
+    <label>Overlay top from image top (%)</label>
+    <input id="overlayTopPercent" type="number" name="overlayTopPercent" min="0" max="90" step="1" value="${overlayTopPercent}">
+    <label>Overlay font size (px)</label>
+    <input id="overlayFontSizePx" type="number" name="overlayFontSizePx" min="10" max="64" step="1" value="${overlayFontSizePx}">
+    <label>Overlay preview</label>
+    <div class="overlay-preview">
+      <div class="overlay-preview-frame">
+        <img id="overlayPreviewImage" class="overlay-preview-image" src="${selectedThumbUrl}" alt="Overlay preview thumbnail">
+        <div id="overlayPreviewText" class="overlay-preview-text" style="top:${overlayTopPercent}%;font-size:${overlayFontSizePx}px;${overlayText.trim() ? '' : 'display:none;'}">${escHtml(overlayText)}</div>
+      </div>
+    </div>
+    <p style="font-size:12px;color:#666;margin-bottom:12px">Preview updates as you edit and when you switch the selected thumbnail.</p>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
       <input type="checkbox" name="published" ${video.meta.published ? 'checked' : ''}>
       <span>Published</span>
@@ -995,6 +1086,69 @@ ${opts.flash ? `<div class="flash ${opts.flashError ? 'flash-err' : 'flash-ok'}"
     <button class="btn btn-primary" type="submit">Save</button>
   </form>
 </div>
+<script>
+  (function() {
+    var textInput = document.getElementById('overlayText');
+    var topInput = document.getElementById('overlayTopPercent');
+    var sizeInput = document.getElementById('overlayFontSizePx');
+    var previewImage = document.getElementById('overlayPreviewImage');
+    var previewText = document.getElementById('overlayPreviewText');
+    if (!(textInput instanceof HTMLTextAreaElement) ||
+        !(topInput instanceof HTMLInputElement) ||
+        !(sizeInput instanceof HTMLInputElement) ||
+        !(previewImage instanceof HTMLImageElement) ||
+        !(previewText instanceof HTMLElement)) {
+      return;
+    }
+
+    function clamp(value, min, max, fallback) {
+      var parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return fallback;
+      }
+      return Math.min(max, Math.max(min, parsed));
+    }
+
+    function selectedThumbUrl() {
+      var selected = document.querySelector('input[name="thumb"]:checked');
+      if (!(selected instanceof HTMLInputElement)) {
+        return '';
+      }
+      var sibling = selected.nextElementSibling;
+      if (sibling instanceof HTMLImageElement) {
+        return sibling.src;
+      }
+      return '';
+    }
+
+    function syncPreview() {
+      var text = textInput.value || '';
+      var top = clamp(topInput.value, 0, 90, 10);
+      var size = clamp(sizeInput.value, 10, 64, 16);
+      previewText.textContent = text;
+      previewText.style.top = String(top) + '%';
+      previewText.style.fontSize = String(size) + 'px';
+      previewText.style.display = text.trim() ? 'block' : 'none';
+
+      var thumb = selectedThumbUrl();
+      if (thumb && previewImage.src !== thumb) {
+        previewImage.src = thumb;
+      }
+    }
+
+    textInput.addEventListener('input', syncPreview);
+    topInput.addEventListener('input', syncPreview);
+    sizeInput.addEventListener('input', syncPreview);
+    document.addEventListener('change', function(event) {
+      var target = event.target;
+      if (target instanceof HTMLInputElement && target.name === 'thumb') {
+        syncPreview();
+      }
+    });
+
+    syncPreview();
+  })();
+</script>
 <div class="card">
   <h2>Subtitles (AWS Transcribe)</h2>
   <p style="font-size:13px;color:#666;margin-bottom:10px">

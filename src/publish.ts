@@ -15,6 +15,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { lookup as mimeLookup } from 'mime-types';
 
 export const STATIC_DIR = path.join(CONTENT_DIR, 'static');
+export const PREVIEW_DIR = path.join(CONTENT_DIR, 'static-preview');
 const execAsync = promisify(exec);
 
 interface GenerateOptions {
@@ -172,9 +173,10 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
   const forPreview = options.forPreview === true;
   const basePath = forPreview ? '/preview' : '';
   const fallbackShareBaseUrl = forPreview ? 'http://localhost:3000/preview' : 'http://localhost:3000';
+  const outputDir = forPreview ? PREVIEW_DIR : STATIC_DIR;
 
-  fs.rmSync(STATIC_DIR, { recursive: true, force: true });
-  fs.mkdirSync(STATIC_DIR, { recursive: true });
+  fs.rmSync(outputDir, { recursive: true, force: true });
+  fs.mkdirSync(outputDir, { recursive: true });
 
   const allVideos = listVideos();
   const published = allVideos.filter(v => v.meta.published);
@@ -194,20 +196,20 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
   const avatarSrc = path.join(CONTENT_DIR, 'avatar.jpg');
   const hasAvatar = fs.existsSync(avatarSrc);
   if (hasAvatar) {
-    const avatarDest = path.join(STATIC_DIR, 'avatar.jpg');
+    const avatarDest = path.join(outputDir, 'avatar.jpg');
     await generateAvatar(avatarSrc, avatarDest);
   }
 
   // Index
   writeFile(
-    path.join(STATIC_DIR, 'index.html'),
+    path.join(outputDir, 'index.html'),
     generateIndexHTML(published, categories, bio, hasAvatar, basePath, siteShareCard, analytics)
   );
 
   // Category pages
   for (const category of categories) {
     const catVideos = published.filter(video => extractTags(video.meta.title).includes(category.tag));
-    const catDir = path.join(STATIC_DIR, 'category', category.label);
+    const catDir = path.join(outputDir, 'category', category.label);
     fs.mkdirSync(catDir, { recursive: true });
     writeFile(
       path.join(catDir, 'index.html'),
@@ -217,10 +219,10 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
 
   if (forPreview) {
     // Preview points to existing content without duplicating video assets.
-    const previewVideoRoot = path.join(STATIC_DIR, 'video');
+    const previewVideoRoot = path.join(outputDir, 'video');
     fs.mkdirSync(previewVideoRoot, { recursive: true });
     for (const video of published) {
-      const videoStaticDir = path.join(STATIC_DIR, 'video', video.slug);
+      const videoStaticDir = path.join(outputDir, 'video', video.slug);
       const videoContentDir = path.join(CONTENT_DIR, 'videos', video.slug);
       const videoShareCard = await buildShareCard(
         'Share video',
@@ -264,7 +266,7 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
   // Publish build copies all video assets into static output.
   for (const video of published) {
     const videoContentDir = path.join(CONTENT_DIR, 'videos', video.slug);
-    const videoStaticDir = path.join(STATIC_DIR, 'video', video.slug);
+    const videoStaticDir = path.join(outputDir, 'video', video.slug);
     const videoShareCard = await buildShareCard(
       'Share video',
       shareBaseUrl ? `${shareBaseUrl}/video/${video.slug}/` : undefined

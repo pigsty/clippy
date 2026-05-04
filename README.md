@@ -45,6 +45,7 @@ Lightweight local CMS for short-form vertical video content.
 4. After upload/transcode, open the video edit page:
    - pick a generated thumbnail, or
    - upload a custom thumbnail
+   - optionally add tile overlay text, set its top position (%), and font size
 5. Mark **Published** and save.
 
 Notes:

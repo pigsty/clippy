@@ -8,7 +8,7 @@ import { requireAuth, loginHandler, logoutHandler } from './auth';
 import { listVideos, getVideo, saveVideoMeta, deleteVideo, CONTENT_DIR, VideoMeta } from './videos';
 import { transcodeVideo, extractThumbs } from './transcode';
 import { runTranscriptionStep } from './transcribe';
-import { publish, generateStaticSite, STATIC_DIR } from './publish';
+import { publish, generateStaticSite, STATIC_DIR, PREVIEW_DIR } from './publish';
 import { getPublishStatus, markPublishFailed, markPublishRunning, markPublishSuccess } from './publishStatus';
 import { adminPage, loginPage, editVideoPage, bioPage } from './templates';
 
@@ -93,7 +93,7 @@ app.use(
 
 // Serve uploaded content (HLS, thumbs) for the admin UI
 app.use('/content', express.static(CONTENT_DIR));
-app.use('/preview', requireAuth, express.static(STATIC_DIR));
+app.use('/preview', requireAuth, express.static(PREVIEW_DIR));
 
 // Multer for video uploads — write directly to content dir to avoid cross-device moves
 const videoStorage = multer.diskStorage({
@@ -250,11 +250,27 @@ app.post('/admin/video/:slug', requireAuth, (req, res) => {
     return;
   }
   const body = req.body as Record<string, string>;
+  const overlayTextRaw = (body.overlayText || '').replace(/\r\n/g, '\n');
+  const topValue = Number(body.overlayTopPercent);
+  const fontSizeValue = Number(body.overlayFontSizePx);
+  const overlayTopPercent = Number.isFinite(topValue)
+    ? Math.min(90, Math.max(0, Math.round(topValue)))
+    : typeof video.meta.overlayTopPercent === 'number' && Number.isFinite(video.meta.overlayTopPercent)
+    ? Math.min(90, Math.max(0, video.meta.overlayTopPercent))
+    : 10;
+  const overlayFontSizePx = Number.isFinite(fontSizeValue)
+    ? Math.min(64, Math.max(10, Math.round(fontSizeValue)))
+    : typeof video.meta.overlayFontSizePx === 'number' && Number.isFinite(video.meta.overlayFontSizePx)
+    ? Math.min(64, Math.max(10, video.meta.overlayFontSizePx))
+    : 16;
   const updated: VideoMeta = {
     ...video.meta,
     title: (body.title || 'Untitled').trim(),
     publishDate: body.publishDate || undefined,
     thumb: body.thumb || video.meta.thumb,
+    overlayText: overlayTextRaw.trim() ? overlayTextRaw : undefined,
+    overlayTopPercent,
+    overlayFontSizePx,
     published: body.published === 'on',
   };
   saveVideoMeta(req.params.slug, updated);

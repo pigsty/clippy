@@ -8,6 +8,9 @@ export interface VideoMeta {
   title: string;
   publishDate?: string;
   thumb?: string;
+  overlayText?: string;
+  overlayTopPercent?: number;
+  overlayFontSizePx?: number;
   published?: boolean;
   transcodeStatus?: 'queued' | 'processing' | 'completed' | 'failed';
   transcodeError?: string;
