@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import QRCode from 'qrcode';
@@ -11,7 +12,9 @@ import {
   generateVideoHTML,
   VideoNavigationData,
 } from './templates';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectsCommand } from '@aws-sdk/client-s3';
+import { CloudFrontClient, CreateInvalidationCommand } from '@aws-sdk/client-cloudfront';
+import { computeInvalidationPaths } from './publishInvalidation';
 import { lookup as mimeLookup } from 'mime-types';
 
 export const STATIC_DIR = path.join(CONTENT_DIR, 'static');
@@ -27,6 +30,19 @@ interface ShareCardData {
   url: string;
   qrCodeDataUrl: string;
 }
+
+interface PublishManifest {
+  version: 1;
+  files: Record<string, string>;
+}
+
+interface S3SyncResult {
+  changed: boolean;
+  changedKeys: string[];
+  allKnownKeys: string[];
+}
+
+const PUBLISH_MANIFEST_KEY = '.clippy-manifest.json';
 
 function buildVideoNavigation(
   videos: Video[],
@@ -112,20 +128,111 @@ async function buildShareCard(label: string, url?: string): Promise<ShareCardDat
   };
 }
 
-async function uploadToS3(): Promise<void> {
+function sha256Hex(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+async function bodyToString(body: unknown): Promise<string> {
+  if (body && typeof body === 'object' && 'transformToString' in body) {
+    const transformToString = (body as { transformToString: () => Promise<string> }).transformToString;
+    return transformToString();
+  }
+
+  if (body instanceof Uint8Array) {
+    return Buffer.from(body).toString('utf-8');
+  }
+
+  throw new Error('Unsupported S3 body type for manifest');
+}
+
+async function loadManifest(client: S3Client, bucket: string): Promise<PublishManifest> {
+  try {
+    const res = await client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: PUBLISH_MANIFEST_KEY,
+      })
+    );
+
+    if (!res.Body) {
+      return { version: 1, files: {} };
+    }
+
+    const text = await bodyToString(res.Body);
+    const parsed = JSON.parse(text) as Partial<PublishManifest>;
+    if (parsed.version !== 1 || !parsed.files || typeof parsed.files !== 'object') {
+      console.log('Existing publish manifest is invalid, doing full sync');
+      return { version: 1, files: {} };
+    }
+
+    return { version: 1, files: parsed.files as Record<string, string> };
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    if (name === 'NoSuchKey') {
+      return { version: 1, files: {} };
+    }
+    throw err;
+  }
+}
+
+async function uploadManifest(client: S3Client, bucket: string, manifest: PublishManifest): Promise<void> {
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: PUBLISH_MANIFEST_KEY,
+      Body: JSON.stringify(manifest),
+      ContentType: 'application/json',
+    })
+  );
+}
+
+async function deleteKeys(client: S3Client, bucket: string, keys: string[]): Promise<void> {
+  if (keys.length === 0) {
+    return;
+  }
+
+  const batchSize = 1000;
+  for (let i = 0; i < keys.length; i += batchSize) {
+    const batch = keys.slice(i, i + batchSize);
+    await client.send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects: batch.map(Key => ({ Key })),
+          Quiet: true,
+        },
+      })
+    );
+  }
+}
+
+async function uploadToS3(): Promise<S3SyncResult> {
   const bucket = process.env.S3_BUCKET;
   const region = process.env.S3_REGION || 'us-east-1';
 
   if (!bucket) {
     console.log('S3_BUCKET not configured — skipping upload');
-    return;
+    return { changed: false, changedKeys: [], allKnownKeys: [] };
   }
 
   const client = new S3Client({ region });
   const files = getAllFiles(STATIC_DIR);
+  const nextFiles: Record<string, string> = {};
 
   for (const file of files) {
     const key = path.relative(STATIC_DIR, file).replace(/\\/g, '/');
+    const body = fs.readFileSync(file);
+    nextFiles[key] = sha256Hex(body);
+  }
+
+  const previousManifest = await loadManifest(client, bucket);
+  const previousFiles = previousManifest.files;
+  const keysToUpload = Object.keys(nextFiles).filter(key => previousFiles[key] !== nextFiles[key]);
+  const keysToDelete = Object.keys(previousFiles).filter(key => !(key in nextFiles));
+  const allKnownKeys = Array.from(new Set([...Object.keys(previousFiles), ...Object.keys(nextFiles)]));
+
+  for (const key of keysToUpload) {
+    const file = path.join(STATIC_DIR, key);
     const contentType = mimeLookup(file) || 'application/octet-stream';
     await client.send(
       new PutObjectCommand({
@@ -138,7 +245,72 @@ async function uploadToS3(): Promise<void> {
     console.log(`  uploaded: ${key}`);
   }
 
-  console.log(`Published ${files.length} files to s3://${bucket}`);
+  await deleteKeys(client, bucket, keysToDelete);
+  for (const key of keysToDelete) {
+    console.log(`  deleted: ${key}`);
+  }
+
+  const nextManifest: PublishManifest = {
+    version: 1,
+    files: nextFiles,
+  };
+  await uploadManifest(client, bucket, nextManifest);
+
+  const changed = keysToUpload.length > 0 || keysToDelete.length > 0;
+  if (changed) {
+    console.log(
+      `Published delta to s3://${bucket} (${keysToUpload.length} uploaded, ${keysToDelete.length} deleted, ${files.length} total keys)`
+    );
+  } else {
+    console.log(`No S3 changes detected for s3://${bucket}`);
+  }
+
+  return {
+    changed,
+    changedKeys: Array.from(new Set([...keysToUpload, ...keysToDelete])).sort((a, b) => a.localeCompare(b)),
+    allKnownKeys,
+  };
+}
+
+function distributionIdFromArn(arn: string): string {
+  const match = arn.trim().match(/:distribution\/([A-Za-z0-9_-]+)$/);
+  if (!match) {
+    throw new Error('CF_DISTRIBUTION_ARN must be a valid CloudFront distribution ARN');
+  }
+  return match[1];
+}
+
+async function invalidateCloudFrontIfConfigured(syncResult: S3SyncResult): Promise<void> {
+  if (!syncResult.changed) {
+    return;
+  }
+
+  const distributionArn = process.env.CF_DISTRIBUTION_ARN;
+  if (!distributionArn) {
+    return;
+  }
+
+  const distributionId = distributionIdFromArn(distributionArn);
+  const client = new CloudFrontClient({ region: 'us-east-1' });
+  const callerReference = `clippy-${Date.now()}`;
+  const invalidationPaths = computeInvalidationPaths(syncResult.changedKeys, syncResult.allKnownKeys);
+
+  await client.send(
+    new CreateInvalidationCommand({
+      DistributionId: distributionId,
+      InvalidationBatch: {
+        CallerReference: callerReference,
+        Paths: {
+          Quantity: invalidationPaths.length,
+          Items: invalidationPaths,
+        },
+      },
+    })
+  );
+
+  console.log(
+    `CloudFront invalidation requested for distribution ${distributionId} (${invalidationPaths.length} path${invalidationPaths.length === 1 ? '' : 's'})`
+  );
 }
 
 async function generateAvatar(srcPath: string, destPath: string): Promise<void> {
@@ -304,5 +476,6 @@ export async function generateStaticSite(options: GenerateOptions = {}): Promise
 
 export async function publish(): Promise<void> {
   await generateStaticSite();
-  await uploadToS3();
+  const syncResult = await uploadToS3();
+  await invalidateCloudFrontIfConfigured(syncResult);
 }

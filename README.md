@@ -25,6 +25,7 @@ Lightweight local CMS for short-form vertical video content.
    - `ADMIN_PASSWORD` = admin login password
    - `SESSION_SECRET` = random string
    - `S3_BUCKET`, `S3_REGION` for publishing
+   - `CF_DISTRIBUTION_ARN` to invalidate CloudFront cache after publish (optional)
 
 3. Start with Docker:
 
