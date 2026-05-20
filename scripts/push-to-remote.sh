@@ -2,7 +2,7 @@
 set -euo pipefail
 
 IMAGE_NAME="${IMAGE_NAME:-clippy:latest}"
-REMOTE_HOST="${REMOTE_HOST:-chris@vault}"
+REMOTE_HOST="${REMOTE_HOST:-myuser@mydockerhost}"
 REMOTE_TAR_PATH="${REMOTE_TAR_PATH:-/tmp/clippy-image.tar}"
 KEEP_TAR="${KEEP_TAR:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -12,11 +12,11 @@ usage() {
 Build, transfer, and load a Docker image on a remote host via SCP/SSH.
 
 Usage:
-  scripts/push-to-vault.sh [--image IMAGE] [--host USER@HOST] [--remote-tar /path/file.tar] [--skip-build] [--keep-tar]
+  scripts/push-to-remote.sh [--image IMAGE] [--host USER@HOST] [--remote-tar /path/file.tar] [--skip-build] [--keep-tar]
 
 Options:
   --image IMAGE          Docker image tag to build/save/load (default: clippy:latest)
-  --host USER@HOST       SSH/SCP target host (default: chris@vault)
+  --host USER@HOST       SSH/SCP target host (default: myuser@mydockerhost)
   --remote-tar PATH      Destination tar path on remote host (default: /tmp/clippy-image.tar)
   --skip-build           Skip docker build step and push existing local image
   --keep-tar             Keep local and remote tar files after load
