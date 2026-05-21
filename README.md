@@ -1,6 +1,6 @@
 # Clippy
 
-Lightweight local CMS for short-form vertical video content.
+Super-lightweight self-hosted CMS and static site generator for short-form vertical video content. The generated site features a tiled homepage of posts with a bio at the top, just like the popular social video sites. You can host the CMS on your own server at home and push the generated site to AWS S3 to be served via Cloudfront. As well as being simple and fast it's highly reliable - if the CMS is down, the static site will still work.
 
 ## What it does
 
@@ -8,6 +8,7 @@ Lightweight local CMS for short-form vertical video content.
 - Uploads a video and creates HLS output (360p, 480p, 720p, 1080p)
 - Extracts 5 thumbnails automatically
 - Lets you pick a thumbnail or upload a custom one
+- Transcribes subtitles automatically and allows you to make edits
 - Uses hashtags in the title as categories (example: `My clip #travel #food`)
 - Generates a static site on demand
 - Lets you preview static output locally before publishing to S3
